@@ -27,9 +27,11 @@ standardized failure in the response.
 - [API Examples](#api-examples)
 - [Error Handling](#error-handling)
 - [Testing](#testing)
+- [Live Integration Testing](#live-integration-testing)
 - [Docker Setup](#docker-setup)
 - [Security Considerations](#security-considerations)
 - [Limitations and Future Improvements](#limitations-and-future-improvements)
+- [Documentation](#documentation)
 
 ## Project Overview
 
@@ -105,6 +107,10 @@ app/
   services/
     posting_service.py    Concurrent orchestration and timeout handling
 tests/                    Mocked provider and API tests
+docs/
+  LOCAL_DEVELOPMENT.md    Local macOS setup and shutdown guide
+  LIVE_INTEGRATION_TESTING.md
+                            Live publishing verification from 21 November 2026
 .env.example              Credential and timeout variable template
 Dockerfile                Python 3.13 application image
 docker-compose.yml        Local container configuration
@@ -131,8 +137,15 @@ source .venv/bin/activate
 python -m pip install -r requirements.txt
 cp .env.example .env
 
-uvicorn app.main:app --host 127.0.0.1 --port 4000 --env-file .env --reload
+set -a
+source .env
+set +a
+
+uvicorn app.main:app --host 127.0.0.1 --port 4000 --reload
 ```
+
+The `set -a` and `set +a` commands export the variables in `.env` to the
+Uvicorn process. Keep the real `.env` file local and do not commit it.
 
 With the server running, open:
 
@@ -191,8 +204,16 @@ around the call.
 
 ```bash
 source .venv/bin/activate
-uvicorn app.main:app --host 127.0.0.1 --port 4000 --env-file .env --reload
+
+set -a
+source .env
+set +a
+
+uvicorn app.main:app --host 127.0.0.1 --port 4000 --reload
 ```
+
+Loading `.env` before Uvicorn ensures that provider credentials and timeout
+settings are available to the application process.
 
 The HTTP port is `4000`.
 
@@ -431,8 +452,40 @@ The suite covers:
 - Provider authentication, rate limits, malformed responses, network failures,
   and missing configuration
 
-Automated tests use mocked provider APIs. Live posting to the five external
-platforms has not yet been verified.
+Automated tests use mocked provider APIs. Live integration tests are separate
+and require configured provider credentials and external account access.
+
+## Live Integration Testing
+
+On 21 November 2026, a live integration request returned HTTP 200 and
+successfully published the same message to two configured platforms:
+
+### Successfully tested live publishing
+
+| Platform | Status |
+| --- | --- |
+| DEV Community (DEV/Forem) | SUCCESS |
+| Mastodon | SUCCESS |
+
+### Not yet configured for live testing
+
+| Platform | Status |
+| --- | --- |
+| Telegram | Not configured |
+| Discord | Not configured |
+| Bluesky | Not configured |
+
+The API returned independent results for all five platforms. An HTTP 200
+response confirms successful processing of the API request; it does not mean
+that every platform succeeded. In this test, DEV and Mastodon published the
+message successfully, while Telegram, Discord, and Bluesky returned
+configuration failures.
+
+DEV public accessibility was not independently verified by the API. Mastodon
+reported `public_access: true`.
+
+See [Live Integration Testing details](docs/LIVE_INTEGRATION_TESTING.md) for
+the request and provider results.
 
 ## Docker Setup
 
@@ -508,8 +561,11 @@ files or `.env`.
 
 ## Limitations and Future Improvements
 
-- Automated tests use mocked provider APIs and do not publish live posts.
-- Live posting to the five external platforms has not yet been verified.
+- Automated tests use mocked provider APIs and are separate from live
+  integration tests.
+- Live posting has been verified for DEV/Forem and Mastodon only; Telegram,
+  Discord, and Bluesky still require live configuration and testing.
+- DEV public accessibility was not independently verified.
 - No database, queue, retry policy, scheduled posting, or durable job tracking
   is implemented.
 - No authentication or authorization is implemented for the FastAPI endpoint
@@ -523,3 +579,4 @@ files or `.env`.
 ## Documentation
 
 - [Local Development Guide](docs/LOCAL_DEVELOPMENT.md)
+- [Live Integration Testing](docs/LIVE_INTEGRATION_TESTING.md)
