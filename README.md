@@ -57,7 +57,7 @@ top-level `success` field is `true` when at least one provider succeeds.
 
 | Platform | Provider behavior | Public visibility representation |
 | --- | --- | --- |
-| DEV/Forem | Creates a published article at `https://dev.to/api/articles` | Uses the API's `published` value |
+| DEV/Forem | Creates a published article at `https://dev.to/api/articles` | Uses the API's `published` value, but that field does not independently verify public accessibility |
 | Mastodon | Creates a public status through the instance API | Uses the returned status visibility |
 | Telegram | Sends `text` through the Bot API `sendMessage` method | `true` only for public channel/supergroup usernames |
 | Discord | Executes an incoming webhook with `wait=true` | Always `false`; no public internet URL is assumed |
@@ -160,8 +160,9 @@ returned as a safe failed result instead of causing the whole request to fail.
 
 ## Environment Variables
 
-All variables in `.env.example` are listed below. Credential values and timeout
-values are not invented or exposed by this project.
+All variables in `.env.example` are listed below. The file contains placeholders
+and timeout defaults, not real provider credentials. Real credentials are required
+for successful live posting to the corresponding platform.
 
 | Variable | Required | Platform | Purpose |
 | --- | --- | --- | --- |
@@ -257,7 +258,8 @@ curl -X POST http://127.0.0.1:4000/posting \
   -d '{"message":"A useful update https://example.com"}'
 ```
 
-Successful response example:
+Successful response example. The URLs, IDs, and timestamps below are
+illustrative values, not evidence that a real post was published:
 
 ```json
 {
