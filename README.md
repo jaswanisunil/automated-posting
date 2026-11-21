@@ -519,3 +519,7 @@ files or `.env`.
 - Future work could add API authentication, persisted posting jobs, controlled
   retries, metrics, structured audit-safe logging, and opt-in live integration
   test tooling.
+
+## Documentation
+
+- [Local Development Guide](docs/LOCAL_DEVELOPMENT.md)
