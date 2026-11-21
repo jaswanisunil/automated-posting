@@ -1,5 +1,5 @@
 # Automated Posting API
-## Mac Startup & Shutdown Guide
+## Local Development – Startup & Shutdown Guide
 
 ---
 
@@ -12,98 +12,146 @@
 
 ### Step 2 – Open Terminal
 
-Copy and execute:
+Navigate to the project directory:
 
 ```bash
 cd /Users/suniljaswani/Interview/Python/automated-posting
 ```
 
-### Step 3 – Start the application
-
-Run:
+### Step 3 – Start Docker
 
 ```bash
 docker compose up -d
 ```
 
-**If Dockerfile or dependencies have changed**, rebuild the application:
+If Dockerfile or dependencies have changed, rebuild:
 
 ```bash
 docker compose up --build -d
 ```
 
-### Step 4 – Verify application status
+### Step 4 – Load environment variables
 
-Run:
+**Important:** Export the variables from `.env` into your Terminal session.
 
-```bash
-docker compose ps
-```
-
-To view application logs:
+Run these commands:
 
 ```bash
-docker compose logs -f
+set -a
+source .env
+set +a
 ```
 
-Press `Ctrl + C` to exit the logs. The application will continue running.
+### Step 5 – Start FastAPI using Uvicorn
+
+```bash
+uvicorn app.main:app --host 127.0.0.1 --port 4000 --reload
+```
+
+**IMPORTANT:**
+
+- Keep this Terminal window open while using the application.
+- Do not press `Ctrl + C` while you are testing the API.
+- Uvicorn runs in the foreground and displays application logs in this window.
 
 ---
 
-## 2. OPEN THE API
+## 2. OPEN SWAGGER UI
 
-### Swagger UI – API Documentation
+Once Uvicorn starts successfully, open:
+
+**Swagger UI:**
 
 http://127.0.0.1:4000/docs
 
-Use Swagger UI to test the `POST /posting` endpoint.
-
-### Health Check
+**Health Check:**
 
 http://127.0.0.1:4000/health
 
+Use Swagger UI to test the `POST /posting` endpoint.
+
 ---
 
-## 3. STOP THE APPLICATION
+## 3. VERIFY APPLICATION STATUS
 
-When you finish working, open Terminal and execute:
+Open a second Terminal window or tab and navigate to the project:
 
 ```bash
 cd /Users/suniljaswani/Interview/Python/automated-posting
 ```
 
-Then run:
+Check Docker containers:
+
+```bash
+docker compose ps
+```
+
+You can also check application logs in the first Terminal window where Uvicorn is running.
+
+---
+
+## 4. STOP THE APPLICATION
+
+When you finish working:
+
+### Step 1 – Stop Uvicorn
+
+Go to the Terminal window running Uvicorn and press:
+
+`Ctrl + C`
+
+### Step 2 – Stop Docker containers
 
 ```bash
 docker compose down
 ```
 
-This stops and removes the running containers.
+---
 
-**Note:** Your project files and `.env` file will remain safe.
+## 5. QUICK START COMMANDS
+
+Execute these commands in order whenever you restart your Mac:
+
+**1. Navigate to project:**
+
+```bash
+cd /Users/suniljaswani/Interview/Python/automated-posting
+```
+
+**2. Start Docker:**
+
+```bash
+docker compose up -d
+```
+
+**3. Load environment variables:**
+
+```bash
+set -a
+source .env
+set +a
+```
+
+**4. Start FastAPI:**
+
+```bash
+uvicorn app.main:app --host 127.0.0.1 --port 4000 --reload
+```
+
+**5. Open Swagger:**
+
+http://127.0.0.1:4000/docs
 
 ---
 
-## 4. QUICK COMMAND REFERENCE
+## 6. IMPORTANT REMINDERS
 
-| Task | Command |
-|---|---|
-| Navigate to project | `cd /Users/suniljaswani/Interview/Python/automated-posting` |
-| Start application | `docker compose up -d` |
-| Rebuild and start | `docker compose up --build -d` |
-| Check status | `docker compose ps` |
-| View logs | `docker compose logs -f` |
-| Stop application | `docker compose down` |
-
----
-
-## 5. IMPORTANT REMINDERS
-
-- Always start Docker Desktop before starting the application.
-- Keep the `.env` file inside the project directory.
+- Start Docker Desktop before running Docker commands.
+- Keep `.env` in the project root directory.
 - Never commit `.env` or expose API keys and access tokens on GitHub.
-- Use `docker compose ps` to check whether the application is running.
-- Use `docker compose logs -f` if you face any issues.
+- Keep the Uvicorn Terminal running while testing.
+- Use a second Terminal window if you need to run other commands.
+- Stop Uvicorn with `Ctrl + C` before stopping Docker.
 
 ---
 
