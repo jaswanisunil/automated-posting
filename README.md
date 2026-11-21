@@ -1,309 +1,263 @@
 # Automated Multi-Platform Posting API
 
-A FastAPI application for validating a short posting message and publishing it
-through configured platforms. DEV/Forem, Mastodon, Telegram, Discord, and
-Bluesky integrations are implemented; other platform integrations are not.
+A FastAPI service that validates one message and posts it to DEV/Forem,
+Mastodon, Telegram, Discord, and Bluesky. The project is designed to
+demonstrate clean API design, provider abstraction, dependency injection,
+concurrent asynchronous integration, and safe handling of partial provider
+failures.
 
-## Project overview and architecture
+The stack uses Python 3.13, FastAPI, Pydantic, HTTPX, Uvicorn, pytest, and
+Docker Compose. One validated `POST /posting` request starts five independent
+provider adapters concurrently; each platform returns its own success or
+standardized failure in the response.
 
-The application accepts one short message and fans it out to all five
-integrations concurrently. Each integration is isolated behind the shared
-`Platform` interface, so a failed provider returns its own result without
-preventing the others from running.
+## Table of Contents
 
-- `app/main.py` defines the FastAPI health and posting endpoints.
-- `app/schemas.py` validates requests and defines the common response/error
-  contract.
-- `app/platforms/base.py` defines the asynchronous platform interface.
-- `app/platforms/` contains one API adapter per provider.
-- `app/services/posting_service.py` runs platforms concurrently, applies an
-  overall safety timeout, propagates cancellation, and sanitizes unexpected
-  failures.
-- `app/dependencies.py` constructs platform adapters from environment
-  variables and injects them into the request handler.
-- `tests/` contains unit tests with mocked provider APIs and an end-to-end
-  endpoint test using mocked transports.
+- [Project Overview](#project-overview)
+- [Features](#features)
+- [Supported Platforms](#supported-platforms)
+- [Architecture](#architecture)
+- [Project Structure](#project-structure)
+- [Requirements](#requirements)
+- [Quick Start](#quick-start)
+- [Installation and Setup](#installation-and-setup)
+- [Environment Variables](#environment-variables)
+- [Running the Application](#running-the-application)
+- [API Documentation](#api-documentation)
+- [API Examples](#api-examples)
+- [Error Handling](#error-handling)
+- [Testing](#testing)
+- [Docker Setup](#docker-setup)
+- [Security Considerations](#security-considerations)
+- [Limitations and Future Improvements](#limitations-and-future-improvements)
+
+## Project Overview
+
+The application exposes a small HTTP API for cross-platform posting. A request
+contains a 200-character-or-fewer message with exactly one HTTP or HTTPS URL.
+The application validates the request, creates a `PostingService` from the
+configured environment variables, and invokes all available platform adapters.
+
+If a provider is not configured or raises an error, the API keeps attempting
+the remaining platforms and returns a separate result for each one. The
+top-level `success` field is `true` when at least one provider succeeds.
+
+## Features
+
+- FastAPI health and posting endpoints
+- Pydantic request validation and typed response models
+- Concurrent calls to five provider integrations
+- Per-platform timeout and standardized failure values
+- Independent provider error handling and cancellation propagation
+- Dependency injection for platform configuration
+- Docker support with health checks and live reload
+- Mocked unit, integration, and API tests
+
+## Supported Platforms
+
+| Platform | Provider behavior | Public visibility representation |
+| --- | --- | --- |
+| DEV/Forem | Creates a published article at `https://dev.to/api/articles` | Uses the API's `published` value |
+| Mastodon | Creates a public status through the instance API | Uses the returned status visibility |
+| Telegram | Sends `text` through the Bot API `sendMessage` method | `true` only for public channel/supergroup usernames |
+| Discord | Executes an incoming webhook with `wait=true` | Always `false`; no public internet URL is assumed |
+| Bluesky | Creates an AT Protocol session and `app.bsky.feed.post` record | `null` because record creation does not confirm app-view visibility |
+
+## Architecture
+
+The application separates HTTP concerns, validation, orchestration, provider
+configuration, and provider-specific API calls:
+
+- `app/main.py` defines the FastAPI application and `/health` and `/posting`
+  routes.
+- Pydantic models in `app/schemas.py` validate `PostingRequest` and enforce
+  the `PostingResponse` and `PostingResult` contracts.
+- `app/platforms/base.py` defines the asynchronous `Platform` abstract base
+  class and its `post(message)` interface.
+- Individual adapters in `app/platforms/` implement DEV/Forem, Mastodon,
+  Telegram, Discord, and Bluesky API behavior.
+- `app/dependencies.py` reads environment variables and uses FastAPI dependency
+  injection to construct the complete platform set.
+- `app/services/posting_service.py` runs platform integrations concurrently,
+  applies a service-level timeout to each adapter call, propagates
+  cancellation, and sanitizes unexpected failures.
+
+Provider calls use `asyncio.gather` and `asyncio.wait_for`. These are per-adapter
+timeouts: the service may wait for slow adapters to finish or time out
+individually, and a timeout for one platform does not cancel or block the
+independent results of the others. Unexpected exceptions are converted to
+standardized `PostingResult` values without exposing provider details.
+
+## Project Structure
+
+```text
+app/
+  main.py                 FastAPI application and routes
+  schemas.py              Pydantic request, result, and response models
+  dependencies.py         Environment configuration and dependency injection
+  platforms/
+    base.py               Platform abstract interface
+    dev.py                DEV/Forem adapter
+    mastodon.py           Mastodon adapter
+    telegram.py           Telegram Bot API adapter
+    discord.py            Discord incoming webhook adapter
+    bluesky.py            AT Protocol/Bluesky adapter
+  services/
+    posting_service.py    Concurrent orchestration and timeout handling
+tests/                    Mocked provider and API tests
+.env.example              Credential and timeout variable template
+Dockerfile                Python 3.13 application image
+docker-compose.yml        Local container configuration
+requirements.txt          Python dependencies
+```
 
 ## Requirements
 
-- Python 3.13 for running locally
-- Docker Desktop with Docker Compose
-- A Docker engine running for the build and run commands
+- Python 3.13 recommended for local execution
+- `pip`
+- Docker Engine with Docker Compose for container execution
 
-The official `python:3.13-slim` image supports ARM64. The Docker configuration
-does not pin a platform, so Docker uses the native architecture on an Apple
-Silicon Mac.
+The Docker image uses `python:3.13-slim`.
 
-## Local installation
+## Quick Start
 
-Create a virtual environment, install the declared dependencies, and create
-your private environment file:
+```bash
+git clone https://github.com/jaswanisunil/automated-posting.git
+cd automated-posting
+
+python3.13 -m venv .venv
+source .venv/bin/activate
+
+python -m pip install -r requirements.txt
+cp .env.example .env
+
+uvicorn app.main:app --host 127.0.0.1 --port 4000 --env-file .env --reload
+```
+
+With the server running, open:
+
+- Swagger UI: <http://127.0.0.1:4000/docs>
+- Health endpoint: <http://127.0.0.1:4000/health>
+
+## Installation and Setup
+
+Create a virtual environment and install the declared dependencies:
 
 ```bash
 python3.13 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
+```
+
+Then copy the environment template:
+
+```bash
 cp .env.example .env
 ```
 
-Fill only the credentials for the services you intend to use. `.env.example`
-contains placeholders and is safe to copy; `.env` is ignored by Git and
-excluded from the Docker build context.
+Fill in only the providers you intend to use. An unconfigured provider is
+returned as a safe failed result instead of causing the whole request to fail.
 
-Run the API locally with Uvicorn loading that environment file:
+## Environment Variables
+
+All variables in `.env.example` are listed below. Credential values and timeout
+values are not invented or exposed by this project.
+
+| Variable | Required | Platform | Purpose |
+| --- | --- | --- | --- |
+| `DEV_API_KEY` | Optional | DEV/Forem | API key used in the `api-key` request header |
+| `DEV_PLATFORM_TIMEOUT_SECONDS` | Optional | DEV/Forem | Per-platform timeout; defaults to `10` |
+| `MASTODON_INSTANCE_URL` | Optional | Mastodon | HTTPS origin of the Mastodon instance |
+| `MASTODON_ACCESS_TOKEN` | Optional | Mastodon | User access token authorized for `write:statuses` |
+| `MASTODON_PLATFORM_TIMEOUT_SECONDS` | Optional | Mastodon | Per-platform timeout; defaults to `10` |
+| `TELEGRAM_BOT_TOKEN` | Optional | Telegram | Bot token created by BotFather |
+| `TELEGRAM_CHAT_ID` | Optional | Telegram | Numeric chat/channel ID or `@username` |
+| `TELEGRAM_PLATFORM_TIMEOUT_SECONDS` | Optional | Telegram | Per-platform timeout; defaults to `10` |
+| `DISCORD_WEBHOOK_URL` | Optional | Discord | Complete HTTPS incoming webhook URL |
+| `DISCORD_PLATFORM_TIMEOUT_SECONDS` | Optional | Discord | Per-platform timeout; defaults to `10` |
+| `BLUESKY_IDENTIFIER` | Optional | Bluesky | Account handle or DID |
+| `BLUESKY_APP_PASSWORD` | Optional | Bluesky | Bluesky app password, not the account password |
+| `BLUESKY_SERVICE_URL` | Optional | Bluesky | PDS HTTPS base URL; defaults to `https://bsky.social` |
+| `BLUESKY_PLATFORM_TIMEOUT_SECONDS` | Optional | Bluesky | Per-platform timeout; defaults to `10` |
+
+Timeout values must be positive, finite numbers. Each adapter also has its own
+HTTP timeout; the `PostingService` applies an additional per-adapter timeout
+around the call.
+
+## Running the Application
+
+### Local Uvicorn server
 
 ```bash
+source .venv/bin/activate
 uvicorn app.main:app --host 127.0.0.1 --port 4000 --env-file .env --reload
 ```
 
-## Environment variable reference
+The HTTP port is `4000`.
 
-All provider credentials are optional. If a provider is not configured, its
-result is a safe failure while the other providers are still attempted.
-Timeout values must be positive finite numbers; each defaults to 10 seconds.
-
-| Platform | Variables | Secret values |
-| --- | --- | --- |
-| DEV/Forem | `DEV_API_KEY`, `DEV_PLATFORM_TIMEOUT_SECONDS` | `DEV_API_KEY` |
-| Mastodon | `MASTODON_INSTANCE_URL`, `MASTODON_ACCESS_TOKEN`, `MASTODON_PLATFORM_TIMEOUT_SECONDS` | `MASTODON_ACCESS_TOKEN` |
-| Telegram | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `TELEGRAM_PLATFORM_TIMEOUT_SECONDS` | `TELEGRAM_BOT_TOKEN` |
-| Discord | `DISCORD_WEBHOOK_URL`, `DISCORD_PLATFORM_TIMEOUT_SECONDS` | `DISCORD_WEBHOOK_URL` |
-| Bluesky | `BLUESKY_IDENTIFIER`, `BLUESKY_APP_PASSWORD`, `BLUESKY_SERVICE_URL`, `BLUESKY_PLATFORM_TIMEOUT_SECONDS` | `BLUESKY_APP_PASSWORD` |
-
-`BLUESKY_SERVICE_URL` defaults to `https://bsky.social`; all other credential
-and service-specific values have no default. See the integration sections
-below for permissions and account setup.
-
-## Docker development setup
-
-Create the external environment file:
+### Docker Compose server
 
 ```bash
 cp .env.example .env
-```
-
-Set `DEV_API_KEY` in `.env` to a key generated from the DEV account's
-[API key settings](https://dev.to/settings/extensions). The key belongs to the
-account that will author the article. The official API documents API-key
-authentication for article creation and does not specify a separate OAuth
-scope. `DEV_PLATFORM_TIMEOUT_SECONDS` configures the per-platform request
-timeout; it defaults to 10 seconds.
-
-For Mastodon, set `MASTODON_INSTANCE_URL` to the HTTPS origin of your instance
-and `MASTODON_ACCESS_TOKEN` to a user access token authorized for the
-`write:statuses` scope. `MASTODON_PLATFORM_TIMEOUT_SECONDS` configures its
-request timeout and defaults to 10 seconds. Keep the token secret.
-
-For Telegram, set `TELEGRAM_BOT_TOKEN` to the token created by
-[@BotFather](https://t.me/BotFather) and `TELEGRAM_CHAT_ID` to the target
-numeric chat/channel ID or `@username`. The bot must be able to post to that
-chat; for channels, it needs permission to post messages.
-`TELEGRAM_PLATFORM_TIMEOUT_SECONDS` configures its request timeout and
-defaults to 10 seconds. Keep the bot token secret.
-
-For Discord, create an incoming webhook in the target channel (the account
-creating it needs the channel's **Manage Webhooks** permission), then set
-`DISCORD_WEBHOOK_URL` to the complete webhook URL.
-`DISCORD_PLATFORM_TIMEOUT_SECONDS` configures its request timeout and defaults
-to 10 seconds. Treat the URL as a password: anyone who obtains it can post to
-that webhook.
-
-For Bluesky, set `BLUESKY_IDENTIFIER` to the account handle or DID,
-`BLUESKY_APP_PASSWORD` to an app password created in account settings (not the
-account's regular password), and `BLUESKY_SERVICE_URL` to the PDS HTTPS base
-URL. The default service URL in `.env.example` is `https://bsky.social`; use
-your PDS URL for accounts hosted elsewhere.
-`BLUESKY_PLATFORM_TIMEOUT_SECONDS` configures the request timeout and defaults
-to 10 seconds. App passwords and session tokens are treated as secrets.
-
-Compose passes `.env` into the container using `env_file`. The file is ignored
-by Git and Docker's build context. Do not add credentials to the image or commit
-the `.env` file.
-
-Build and start the application:
-
-```bash
 docker compose up --build
 ```
 
-Compose bind-mounts the source into the container and starts Uvicorn with
-automatic reload. Only the `app/` and `tests/` directories are mounted; the
-external `.env` file is passed as environment variables and is not mounted into
-the application source tree. The application runs as a non-root user.
+Compose maps host port `4000` to container port `4000`, mounts `app/` and
+`tests/`, and passes `.env` through `env_file`. It starts Uvicorn with reload.
 
-- Swagger UI: <http://localhost:4000/docs>
-- Health check endpoint: <http://localhost:4000/health>
+## API Documentation
 
-The image health check polls `/health`. To inspect container and health status
-in another terminal:
+Interactive OpenAPI documentation is available at
+<http://127.0.0.1:4000/docs>.
 
-```bash
-docker compose ps
-docker inspect --format='{{.State.Health.Status}}' "$(docker compose ps -q app)"
+### Health endpoint
+
+```http
+GET /health
 ```
 
-## Docker commands
+Port: `4000`
 
-Run the complete test suite in the application container:
+Response:
 
-```bash
-docker compose run --rm app python -m pytest -q -p no:cacheprovider
+```json
+{"status": "ok"}
 ```
 
-The cache provider is disabled because the source directory is mounted from the
-host and the container runs as a non-root user.
+### Posting endpoint
 
-Show application logs when running detached:
-
-```bash
-docker compose up --build -d
-docker compose logs -f app
+```http
+POST /posting
+Content-Type: application/json
 ```
 
-Rebuild the image without using cached build layers, then start the application:
+Port: `4000`
 
-```bash
-docker compose build --no-cache
-docker compose up
-```
+Request schema:
 
-Stop and remove the application container:
-
-```bash
-docker compose down
-```
-
-If you started in detached mode, `docker compose down` stops and removes the
-container. It does not delete the source code or `.env` file.
-
-## DEV/Forem integration
-
-The integration calls `POST https://dev.to/api/articles` with the API key in
-the `api-key` header and an `article` JSON object. The official API documentation
-lists `title` and `body_markdown` as string fields; `published: true` publishes
-the article immediately rather than saving a draft.
-
-The request body is the submitted message unchanged. The title is derived only
-from that message: it uses the message itself when it fits, otherwise a prefix
-limited to Forem's current full-post title limit of 128 non-whitespace
-characters. Forem's current model allows up to 800 KB of Markdown body; the
-assessment's 200-character message limit is well below that. No tags,
-description, or other copy are invented. The message body remains complete.
-
-The result uses Forem's `published_at` timestamp, falling back to `created_at`;
-if neither is returned, it records the local UTC confirmation time.
-
-References:
-
-- [Forem API V1 — Publish article](https://developers.forem.com/api/v1#tag/articles/operation/createArticle)
-- [Forem Article model — title validation](https://github.com/forem/forem/blob/main/app/models/article.rb)
-
-The API key is never hardcoded or logged. API failures are mapped to
-standardized messages; response bodies and raw exception messages are not
-returned or logged.
-
-## Mastodon integration
-
-The integration calls `POST {MASTODON_INSTANCE_URL}/api/v1/statuses` with
-`Authorization: Bearer <user access token>`. The official API requires the
-`write:statuses` scope. Requests use form data containing the submitted message
-as `status` and explicitly set `visibility=public`; returned visibility is
-used to report whether the status is publicly accessible.
-
-Authentication failures, rate limits, other API errors, timeouts, and missing
-or invalid configuration produce standardized per-platform results. Raw
-response bodies, authorization headers, and exception messages are never
-logged or returned.
-
-Reference: [Mastodon API — Post a new status](https://docs.joinmastodon.org/methods/statuses/#create)
-
-## Telegram integration
-
-The integration calls Telegram's HTTPS Bot API `sendMessage` method with the
-configured bot token in the API URL and submits the target `chat_id` and
-original message as `text`. It does not add formatting, links, or other content.
-An invalid token returns an authentication failure; missing configuration,
-unavailable destinations or permissions, rate limits, timeouts, network errors,
-and malformed responses become standardized per-platform failures. Sensitive
-API error descriptions, request URLs, and exception messages are not logged or
-returned.
-
-Public accessibility is reported only when Telegram returns a `channel` or
-`supergroup` chat with a username. Other chats—including private chats and
-groups without a public username—are reported with `public_access: false`.
-When a public username is present, the result includes a `t.me` message URL.
-
-Reference: [Telegram Bot API — sendMessage](https://core.telegram.org/bots/api#sendmessage)
-
-## Discord integration
-
-The integration uses an incoming webhook; no Discord bot user or bot token is
-required. It sends the original message as the webhook's `content` and sets
-`wait=true`, so Discord returns the created message object instead of its
-default `204 No Content` response. The returned message ID and timestamp are
-validated before reporting success.
-
-Successful posts are reported with `public_access: false` and no `posted_url`.
-A Discord server message is available according to that server and channel's
-permissions; a successful webhook post does not make it public on the internet.
-Invalid/missing webhook configuration, authentication failures, rate limits,
-timeouts, network failures, and malformed responses return standardized
-results. The webhook URL, API response details, and exception messages are
-never logged or returned.
-
-Reference: [Discord API — Execute Webhook](https://discord.com/developers/docs/resources/webhook#execute-webhook)
-
-## Bluesky integration
-
-The integration creates a session with
-`com.atproto.server.createSession`, then publishes an `app.bsky.feed.post`
-record with `com.atproto.repo.createRecord` using the session access token.
-The record's `text` is the submitted message unchanged. Bluesky limits posts to
-300 Unicode grapheme clusters and 3000 UTF-8 bytes; both limits are validated.
-Over-limit content is returned as a safe failure, never silently truncated.
-The API's 200-character request limit is stricter for this assessment.
-
-The create-record response must contain a valid AT URI for the authenticated
-DID and a CID before a `bsky.app` post URL is returned. The AT Protocol response
-does not confirm public visibility through an app view, so `public_access` is
-reported as `null` rather than assumed. A custom PDS may not be indexed by
-`bsky.app`.
-
-Use an app password rather than your account password. App passwords can be
-created from [Bluesky account settings](https://bsky.app/settings/app-passwords).
-The configured PDS must support the standard AT Protocol XRPC session and
-repository endpoints.
-
-References:
-
-- [AT Protocol — createSession](https://docs.bsky.app/docs/api/com-atproto-server-create-session)
-- [AT Protocol — createRecord](https://docs.bsky.app/docs/api/com-atproto-repo-create-record)
-- [AT Protocol post record lexicon](https://github.com/bluesky-social/atproto/blob/main/packages/api/lexicons/app/bsky/feed/post.json)
-
-## API
-
-`POST /posting` accepts a JSON `message` with a maximum length of 200 characters
-and exactly one valid HTTP or HTTPS URL. Invalid input returns HTTP 422. A valid
-request is posted to each configured platform and returns a per-platform
-result. Missing platform credentials produce safe failed results without
-making requests to those platforms.
+| Field | Type | Constraints |
+| --- | --- | --- |
+| `message` | string | 1–200 Python characters, contains exactly one valid HTTP or HTTPS URL |
 
 Validation rules:
 
-- The message must not be empty or whitespace-only.
-- It must contain exactly one valid HTTP or HTTPS URL with a hostname.
-- URLs containing embedded usernames or passwords are rejected.
-- The message limit is 200 Python characters, inclusive.
+- The message cannot be empty or whitespace-only.
+- It must contain exactly one HTTP or HTTPS URL.
+- The URL must have a hostname.
+- Embedded usernames or passwords in the URL are rejected.
+- The message is limited to 200 characters inclusive.
 
-Example request:
+## API Examples
+
+### Successful request
 
 ```bash
-curl -X POST http://localhost:4000/posting \
+curl -X POST http://127.0.0.1:4000/posting \
   -H 'Content-Type: application/json' \
   -d '{"message":"A useful update https://example.com"}'
 ```
 
-Example response (provider timestamps and identifiers are illustrative):
+Successful response example:
 
 ```json
 {
@@ -358,47 +312,208 @@ Example response (provider timestamps and identifiers are illustrative):
 }
 ```
 
-The top-level `success` is true if at least one platform succeeds. Valid input
-returns HTTP 200 even if every provider fails; inspect each result's `status`
-and `error`. `public_access` is `null` when it cannot be confirmed.
-`GET /health` returns `{"status": "ok"}`.
+The top-level `success` is `true` if at least one platform succeeds. Valid input
+returns HTTP `200` even if every provider fails; inspect each per-platform
+`status` and `error`.
 
-## Error handling and public visibility
+### Validation error example
 
-Each adapter maps API authentication errors, rate limits, timeouts, network
-errors, and malformed responses to standard error values. Results contain no
-raw provider response or exception details. A provider failure is isolated
-from the other concurrent requests. Cancelling the parent request propagates
-cancellation rather than turning it into an ordinary provider failure.
+```bash
+curl -X POST http://127.0.0.1:4000/posting \
+  -H 'Content-Type: application/json' \
+  -d '{"message":"No CTA link"}'
+```
 
-Public visibility is provider-specific: DEV is public only when its response
-confirms publication; Mastodon uses returned status visibility; Telegram
-requires a public channel/supergroup username; Discord posts are not claimed
-as internet-public; Bluesky returns `null` because record creation does not
-confirm app-view visibility. A successful post does not necessarily mean a
-publicly reachable web URL is available.
+Response:
 
-Automated tests mock all five APIs. None of the integrations has been verified
-against live APIs; that requires valid credentials and successful real posts.
+```json
+{
+  "detail": [
+    {
+      "type": "value_error",
+      "loc": ["body", "message"],
+      "msg": "Value error, Message must include exactly one HTTP or HTTPS URL.",
+      "input": "No CTA link",
+      "ctx": {}
+    }
+  ]
+}
+```
 
-## Optional live verification
+The HTTP status is `422 Unprocessable Entity`.
 
-The automated tests never contact provider APIs. If you choose to verify a live
-integration, use a test account and a low-risk destination, configure only that
-provider in `.env`, and submit a harmless message. A valid `/posting` request
-will send to every provider with complete credentials. Check the per-provider
-result and the destination itself; a successful response is not a substitute
-for verifying visibility. Revoke test tokens, app passwords, or webhooks when
-finished. Do not use production credentials for test messages.
+### Platform failure example
 
-## Tests outside Docker
+Valid input returns HTTP `200` when providers fail. For example, with all
+credentials absent:
 
-Run the complete mocked suite and basic compilation/dependency checks:
+```json
+{
+  "success": false,
+  "results": [
+    {
+      "platform": "DEV/Forem",
+      "status": "failed",
+      "posted_url": null,
+      "public_access": false,
+      "date": null,
+      "time": null,
+      "error": "The platform is not configured."
+    }
+  ]
+}
+```
+
+The real response contains all five platform entries in the order shown below:
+DEV/Forem, Mastodon, Telegram, Discord, and Bluesky.
+
+## Error Handling
+
+Platform failures use a fixed set of standardized Pydantic errors:
+
+| Error | Meaning |
+| --- | --- |
+| `The platform request timed out.` | The adapter call exceeded its timeout |
+| `The platform could not complete the post.` | A provider or unexpected failure occurred |
+| `The platform is not configured.` | Required credentials or destination settings are absent |
+| `The platform authentication failed.` | Authentication or authorization failed |
+| `The platform rate limit was reached.` | The provider returned a rate-limit response |
+| `The platform rejected the submitted content.` | The provider rejected the request content or parameters |
+| `The platform could not access the configured destination.` | The destination could not be used |
+| `The submitted message exceeds the platform's post-length limit.` | A provider-specific content limit was exceeded |
+| `The platform returned an invalid response.` | The provider response was missing required valid fields |
+
+The adapters also protect the response and logs from raw credentials, response
+bodies, URLs containing secrets, and unexpected exception messages. Cancelling
+a parent posting task propagates cancellation to in-progress adapter calls
+rather than converting it into an ordinary provider failure.
+
+## Testing
+
+### Run all tests locally
 
 ```bash
 python -m pytest -q
-python -m compileall -q app tests
-python -m pip check
 ```
 
-The Docker test command is documented above under Docker commands.
+The verified suite currently reports `160 passed`.
+
+The module-based command is recommended because it adds the repository root to
+Python's import path.
+
+### Run a specific test module
+
+```bash
+python -m pytest -q tests/test_posting_service.py
+python -m pytest -q tests/test_validation.py
+python -m pytest -q tests/test_api_integration.py
+```
+
+To run all tests for a platform adapter:
+
+```bash
+python -m pytest -q tests/test_bluesky.py
+```
+
+### Automated test coverage
+
+The suite covers:
+
+- Pydantic validation, URL rules, message limits, and the health endpoint
+- HTTP endpoint status and per-platform response structure
+- Environment-based construction of all five adapters
+- Concurrent posting and partial-failure behavior
+- Per-platform timeout behavior and parent cancellation
+- Sanitization of credentials and unexpected exception details
+- DEV/Forem, Mastodon, Telegram, Discord, and Bluesky request/response behavior
+- Provider authentication, rate limits, malformed responses, network failures,
+  and missing configuration
+
+Automated tests use mocked provider APIs. Live posting to the five external
+platforms has not yet been verified.
+
+## Docker Setup
+
+### Build the image
+
+```bash
+docker compose build
+```
+
+To force a rebuild without cached layers:
+
+```bash
+docker compose build --no-cache
+```
+
+### Start the application
+
+```bash
+cp .env.example .env
+docker compose up --build
+```
+
+Start in the background:
+
+```bash
+docker compose up --build -d
+```
+
+The Docker health check calls `http://127.0.0.1:4000/health` from inside the
+container.
+
+### View logs and container status
+
+```bash
+docker compose logs -f app
+docker compose ps
+docker inspect --format='{{.State.Health.Status}}' "$(docker compose ps -q app)"
+```
+
+### Run tests in Docker
+
+```bash
+docker compose run --rm app python -m pytest -q
+```
+
+### Stop containers
+
+```bash
+docker compose down
+```
+
+This stops and removes the application container. It does not delete source
+files or `.env`.
+
+## Security Considerations
+
+- Keep credentials in `.env`, and pass them to local or container processes
+  through environment variables.
+- Never commit `.env` or put real credentials in source code, Docker
+  configuration, examples, or API responses.
+- The repository `.gitignore` excludes `.env`, `.env.*`, virtual environments,
+  Python caches, build output, and pytest caches while retaining
+  `.env.example`.
+- Docker Compose reads `.env` through `env_file`; it does not copy it into
+  the application image.
+- The Docker image runs as a non-root `app` user.
+- Provider adapters return standardized errors and generally avoid logging
+  status response bodies or exception messages that may contain secrets.
+- Treat DEV API keys, Mastodon tokens, Telegram bot tokens, Discord webhook
+  URLs, and Bluesky app passwords as revocable secrets.
+- Use test accounts and low-risk destinations for any future live verification,
+  and revoke test credentials after use.
+
+## Limitations and Future Improvements
+
+- Automated tests use mocked provider APIs and do not publish live posts.
+- Live posting to the five external platforms has not yet been verified.
+- No database, queue, retry policy, scheduled posting, or durable job tracking
+  is implemented.
+- No authentication or authorization is implemented for the FastAPI endpoint
+  itself.
+- Provider success is based on each API response, not independent verification
+  that an internet user can see or discover the resulting post.
+- Future work could add API authentication, persisted posting jobs, controlled
+  retries, metrics, structured audit-safe logging, and opt-in live integration
+  test tooling.
